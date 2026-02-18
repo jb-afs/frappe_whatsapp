@@ -12,6 +12,7 @@ from frappe.desk.form.utils import get_pdf_link
 
 from frappe_whatsapp.utils import get_whatsapp_account
 
+
 class WhatsAppTemplates(Document):
     """Create whatsapp template."""
 
@@ -25,7 +26,9 @@ class WhatsAppTemplates(Document):
             self.get_session_id()
             self.get_media_id()
 
-        if not self.is_new():
+        meta_fields = ["template", "header", "footer", "buttons", "header_type"]
+
+        if not self.is_new() and any(self.has_value_changed(f) for f in meta_fields):
             self.update_template()
 
     def set_whatsapp_account(self):
@@ -33,7 +36,11 @@ class WhatsAppTemplates(Document):
         if not self.whatsapp_account:
             default_whatsapp_account = get_whatsapp_account()
             if not default_whatsapp_account:
-                throw(_("Please set a default outgoing WhatsApp Account or Select available WhatsApp Account"))
+                throw(
+                    _(
+                        "Please set a default outgoing WhatsApp Account or Select available WhatsApp Account"
+                    )
+                )
             else:
                 self.whatsapp_account = default_whatsapp_account.name
 
@@ -45,44 +52,41 @@ class WhatsAppTemplates(Document):
         file_type = mime.from_file(file_path)
 
         payload = {
-            'file_length': os.path.getsize(file_path),
-            'file_type': file_type,
-            'messaging_product': 'whatsapp'
+            "file_length": os.path.getsize(file_path),
+            "file_type": file_type,
+            "messaging_product": "whatsapp",
         }
 
         response = make_post_request(
             f"{self._url}/{self._version}/{self._app_id}/uploads",
             headers=self._headers,
-            data=json.loads(json.dumps(payload))
+            data=json.loads(json.dumps(payload)),
         )
-        self._session_id = response['id']
+        self._session_id = response["id"]
 
     def get_media_id(self):
         self.get_settings()
 
-        headers = {
-                "authorization": f"OAuth {self._token}"
-            }
+        headers = {"authorization": f"OAuth {self._token}"}
         file_name = self.get_absolute_path(self.sample)
-        with open(file_name, mode='rb') as file: # b is important -> binary
+        with open(file_name, mode="rb") as file:  # b is important -> binary
             file_content = file.read()
 
         payload = file_content
         response = make_post_request(
             f"{self._url}/{self._version}/{self._session_id}",
             headers=headers,
-            data=payload
+            data=payload,
         )
 
-        self._media_id = response['h']
+        self._media_id = response["h"]
 
     def get_absolute_path(self, file_name):
-        if(file_name.startswith('/files/')):
-            file_path = f'{frappe.utils.get_bench_path()}/sites/{frappe.utils.get_site_base_path()[2:]}/public{file_name}'
-        if(file_name.startswith('/private/')):
-            file_path = f'{frappe.utils.get_bench_path()}/sites/{frappe.utils.get_site_base_path()[2:]}{file_name}'
+        if file_name.startswith("/files/"):
+            file_path = f"{frappe.utils.get_bench_path()}/sites/{frappe.utils.get_site_base_path()[2:]}/public{file_name}"
+        if file_name.startswith("/private/"):
+            file_path = f"{frappe.utils.get_bench_path()}/sites/{frappe.utils.get_site_base_path()[2:]}{file_name}"
         return file_path
-
 
     def after_insert(self):
         if self.template_name:
@@ -240,7 +244,7 @@ class WhatsAppTemplates(Document):
                 samples = self.sample.split(", ")
                 header.update({"example": {"header_text": samples}})
         else:
-            pdf_link = ''
+            pdf_link = ""
             if not self.sample:
                 key = frappe.get_doc(self.doctype, self.name).get_document_share_key()
                 link = get_pdf_link(self.doctype, self.name)
@@ -249,11 +253,16 @@ class WhatsAppTemplates(Document):
 
         return header
 
+
 @frappe.whitelist()
 def fetch():
     """Fetch templates from meta."""
     """Later improve this code to pass a whatsapp account remove the js funcation so that it is called from whatsapp account doctype """
-    whatsapp_accounts = frappe.get_all('WhatsApp Account', filters={'status': 'Active'}, fields=['name', 'token', 'url', 'version', 'business_id'])
+    whatsapp_accounts = frappe.get_all(
+        "WhatsApp Account",
+        filters={"status": "Active"},
+        fields=["name", "token", "url", "version", "business_id"],
+    )
 
     for account in whatsapp_accounts:
         # get credentials
@@ -262,7 +271,10 @@ def fetch():
         version = account.version
         business_id = account.business_id
 
-        headers = {"authorization": f"Bearer {token}", "content-type": "application/json"}
+        headers = {
+            "authorization": f"Bearer {token}",
+            "content-type": "application/json",
+        }
 
         try:
             response = make_request(
@@ -274,8 +286,12 @@ def fetch():
             for template in response["data"]:
                 # set flag to insert or update
                 flags = 1
-                if frappe.db.exists("WhatsApp Templates", {"actual_name": template["name"]}):
-                    doc = frappe.get_doc("WhatsApp Templates", {"actual_name": template["name"]})
+                if frappe.db.exists(
+                    "WhatsApp Templates", {"actual_name": template["name"]}
+                ):
+                    doc = frappe.get_doc(
+                        "WhatsApp Templates", {"actual_name": template["name"]}
+                    )
                 else:
                     flags = 0
                     doc = frappe.new_doc("WhatsApp Templates")
@@ -306,24 +322,29 @@ def fetch():
                     elif component["type"] == "BODY":
                         doc.template = component["text"]
                         if component.get("example"):
-    			            # Check if 'body_text' exists before trying to access it
+                            # Check if 'body_text' exists before trying to access it
                             if component["example"].get("body_text"):
                                 doc.sample_values = ",".join(
-            	                    component["example"]["body_text"][0]
-                    	        )
+                                    component["example"]["body_text"][0]
+                                )
 
                     # Update buttons
                     elif component["type"] == "BUTTONS":
                         doc.set("buttons", [])
-                        frappe.db.delete("WhatsApp Button", {"parent": doc.name, "parenttype": "WhatsApp Templates"})
+                        frappe.db.delete(
+                            "WhatsApp Button",
+                            {"parent": doc.name, "parenttype": "WhatsApp Templates"},
+                        )
                         typeMap = {
                             "URL": "Visit Website",
                             "PHONE_NUMBER": "Call Phone",
                             "QUICK_REPLY": "Quick Reply",
-                            "FLOW": "Flow"
+                            "FLOW": "Flow",
                         }
 
-                        for i, button in enumerate(component.get("buttons", []), start=1):
+                        for i, button in enumerate(
+                            component.get("buttons", []), start=1
+                        ):
                             btn = {}
                             btn["button_type"] = typeMap[button["type"]]
                             btn["button_label"] = button.get("text")
@@ -351,7 +372,7 @@ def fetch():
 
         except Exception as e:
             # Check if frappe.flags.integration_request is set and has a .json() method
-            if hasattr(frappe.flags.integration_request, 'json'):
+            if hasattr(frappe.flags.integration_request, "json"):
                 try:
                     res = frappe.flags.integration_request.json().get("error", {})
                     error_message = res.get("error_user_msg", res.get("message"))
@@ -361,10 +382,13 @@ def fetch():
                     )
                 except (json.JSONDecodeError, KeyError):
                     # Handle cases where the response is not valid JSON or lacks the 'error' key
-                    frappe.throw(f"An unexpected error occurred while fetching templates: {e}")
+                    frappe.throw(
+                        f"An unexpected error occurred while fetching templates: {e}"
+                    )
             else:
                 # Handle cases where frappe.flags.integration_request doesn't exist or isn't a proper response object
                 frappe.throw(f"An unexpected server error occurred: {e}")
+
 
 def upsert_doc_without_hooks(doc, child_dt, child_field):
     """Insert or update a parent document and its children without hooks."""
