@@ -26,7 +26,8 @@ class WhatsAppTemplates(Document):
             self.get_session_id()
             self.get_media_id()
 
-        meta_fields = ["template", "header", "footer", "buttons", "header_type"]
+        # meta_fields = ["template", "header", "footer", "buttons", "header_type"]
+        meta_fields = ["template", "header", "footer", "header_type"]
 
         if not self.is_new() and any(self.has_value_changed(f) for f in meta_fields):
             self.update_template()
