@@ -44,6 +44,65 @@ class TestWhatsAppFlow(FrappeTestCase):
         flow.insert(ignore_permissions=True)
         return flow
 
+    def test_imported_endpoint_flow_unwraps_form_container(self):
+        """Meta flow JSON uses Form as a container, not a saved field type."""
+        from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_flow.whatsapp_flow import (
+            parse_flow_json_to_screens,
+        )
+
+        class FlowImportStub(frappe._dict):
+            def append(self, table, row):
+                self[table].append(frappe._dict(row))
+
+        flow_doc = FlowImportStub({"screens": [], "fields": []})
+        flow_json = {
+            "version": "7.3",
+            "data_api_version": "4.0",
+            "screens": [
+                {
+                    "id": "LEAD_DETAILS",
+                    "title": "Generate a Lead",
+                    "terminal": False,
+                    "refresh_on_back": True,
+                    "layout": {
+                        "type": "SingleColumnLayout",
+                        "children": [
+                            {
+                                "type": "Form",
+                                "name": "form",
+                                "children": [
+                                    {
+                                        "type": "TextInput",
+                                        "label": "First Name",
+                                        "name": "first_name",
+                                        "required": True,
+                                        "input-type": "text",
+                                    },
+                                    {
+                                        "type": "Footer",
+                                        "label": "Submit Lead",
+                                        "on-click-action": {
+                                            "name": "data_exchange",
+                                            "payload": {
+                                                "first_name": "${form.first_name}",
+                                            },
+                                        },
+                                    },
+                                ],
+                            }
+                        ],
+                    },
+                }
+            ],
+        }
+
+        parse_flow_json_to_screens(flow_doc, flow_json)
+
+        self.assertEqual(len(flow_doc.screens), 1)
+        self.assertEqual([field.field_type for field in flow_doc.fields], ["TextInput", "Footer"])
+        self.assertEqual(flow_doc.fields[0].field_name, "first_name")
+        self.assertEqual(flow_doc.fields[1].field_name, "footer")
+
     def test_single_screen_flow_json_generation(self):
         """Test flow JSON generation for a single screen flow."""
         screens = [{

@@ -8,6 +8,18 @@ from frappe.model.document import Document
 from frappe.integrations.utils import make_post_request, make_request
 
 
+FLOW_CONTAINER_TYPES = {"Form"}
+
+
+def _iter_flow_field_components(children):
+    """Yield field components from layout children, unwrapping container nodes."""
+    for child in children or []:
+        if child.get("type") in FLOW_CONTAINER_TYPES:
+            yield from _iter_flow_field_components(child.get("children", []))
+            continue
+        yield child
+
+
 class WhatsAppFlow(Document):
     def before_save(self):
         """Generate flow JSON before saving."""
@@ -809,8 +821,8 @@ def fetch_flow_json_by_id(whatsapp_account, flow_id):
 
         return None
 
-    except Exception as e:
-        frappe.log_error(f"Failed to fetch flow JSON: {str(e)}")
+    except Exception:
+        frappe.log_error("WhatsApp Flow Sync", frappe.get_traceback())
         return None
 
 
@@ -874,8 +886,8 @@ def sync_all_flows(whatsapp_account):
                     flow_doc.flags.ignore_validate = True
                     flow_doc.save(ignore_permissions=True)
                     result["updated"] += 1
-                except Exception as e:
-                    frappe.log_error(f"Failed to update flow {flow_id}: {str(e)}")
+                except Exception:
+                    frappe.log_error("WhatsApp Flow Sync", frappe.get_traceback())
                     result["skipped"] += 1
             else:
                 # Import new flow
@@ -899,8 +911,8 @@ def sync_all_flows(whatsapp_account):
                     flow_doc.flags.ignore_validate = True
                     flow_doc.insert(ignore_permissions=True)
                     result["imported"] += 1
-                except Exception as e:
-                    frappe.log_error(f"Failed to import flow {flow_id}: {str(e)}")
+                except Exception:
+                    frappe.log_error("WhatsApp Flow Sync", frappe.get_traceback())
                     result["skipped"] += 1
 
         frappe.db.commit()
@@ -932,7 +944,7 @@ def parse_flow_json_to_screens(flow_doc, flow_json):
         layout = screen_data.get("layout", {})
         children = layout.get("children", [])
 
-        for child in children:
+        for child in _iter_flow_field_components(children):
             field_type = child.get("type")
             if not field_type:
                 continue
