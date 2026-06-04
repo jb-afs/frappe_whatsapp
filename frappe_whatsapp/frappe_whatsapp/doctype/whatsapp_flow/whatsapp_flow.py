@@ -9,6 +9,8 @@ from frappe.integrations.utils import make_post_request, make_request
 
 
 FLOW_CONTAINER_TYPES = {"Form"}
+TEXT_DISPLAY_FIELD_TYPES = {"TextHeading", "TextSubheading", "TextBody", "TextCaption"}
+DATA_FIELD_MAX_LENGTH = 140
 
 
 def _iter_flow_field_components(children):
@@ -18,6 +20,23 @@ def _iter_flow_field_components(children):
             yield from _iter_flow_field_components(child.get("children", []))
             continue
         yield child
+
+
+def _short_data_value(value, max_length=DATA_FIELD_MAX_LENGTH):
+    value = "" if value is None else str(value)
+    if len(value) <= max_length:
+        return value
+    return value[: max_length - 3] + "..."
+
+
+def _field_value(field, fieldname):
+    if hasattr(field, "get"):
+        return field.get(fieldname)
+    return getattr(field, fieldname, None)
+
+
+def _display_component_text(field):
+    return _field_value(field, "text") or _field_value(field, "label") or ""
 
 
 class WhatsAppFlow(Document):
@@ -166,7 +185,7 @@ class WhatsAppFlow(Document):
         if field_type in ["TextHeading", "TextSubheading", "TextBody", "TextCaption"]:
             return {
                 "type": field_type,
-                "text": field.label or ""
+                "text": _display_component_text(field)
             }
 
         # Image component
@@ -950,11 +969,12 @@ def parse_flow_json_to_screens(flow_doc, flow_json):
                 continue
 
             # Map WhatsApp field types to our field types
+            label = child.get("label") or child.get("text", "")
             field_data = {
                 "screen": screen_data.get("id"),
                 "field_type": field_type,
                 "field_name": child.get("name", field_type.lower()),
-                "label": child.get("label") or child.get("text", ""),
+                "label": _short_data_value(label),
                 "required": 1 if child.get("required") else 0,
                 "enabled": 1,
                 "helper_text": child.get("helper-text", ""),
@@ -963,6 +983,9 @@ def parse_flow_json_to_screens(flow_doc, flow_json):
                 "max_chars": child.get("max-chars"),
                 "error_message": child.get("error-message", "")
             }
+
+            if field_type in TEXT_DISPLAY_FIELD_TYPES:
+                field_data["text"] = child.get("text", "")
 
             # Handle options for dropdowns
             if field_type in ["Dropdown", "RadioButtonsGroup", "CheckboxGroup"]:

@@ -103,6 +103,65 @@ class TestWhatsAppFlow(FrappeTestCase):
         self.assertEqual(flow_doc.fields[0].field_name, "first_name")
         self.assertEqual(flow_doc.fields[1].field_name, "footer")
 
+    def test_imported_text_display_component_keeps_long_text_out_of_label(self):
+        """Long TextBody content should not overflow the 140-char label column."""
+        from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_flow.whatsapp_flow import (
+            parse_flow_json_to_screens,
+        )
+
+        class FlowImportStub(frappe._dict):
+            def append(self, table, row):
+                self[table].append(frappe._dict(row))
+
+        long_text = (
+            "Thank you! Your lead has been successfully submitted. Our team will get in touch "
+            "with your referral shortly. Keep referring and keep earning!"
+        )
+        flow_doc = FlowImportStub({"screens": [], "fields": []})
+        flow_json = {
+            "screens": [
+                {
+                    "id": "SUCCESS",
+                    "title": "Lead Submitted",
+                    "terminal": True,
+                    "layout": {
+                        "type": "SingleColumnLayout",
+                        "children": [
+                            {
+                                "type": "TextBody",
+                                "text": long_text,
+                            }
+                        ],
+                    },
+                }
+            ],
+        }
+
+        parse_flow_json_to_screens(flow_doc, flow_json)
+
+        self.assertEqual(len(flow_doc.fields[0].label), 140)
+        self.assertTrue(flow_doc.fields[0].label.endswith("..."))
+        self.assertEqual(flow_doc.fields[0].text, long_text)
+
+    def test_text_display_component_prefers_long_text_field(self):
+        """Generated flow JSON should use text, falling back to label for old rows."""
+        from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_flow.whatsapp_flow import (
+            WhatsAppFlow,
+        )
+
+        long_text = "This is a long body copy that should be emitted exactly from the text field."
+        flow = WhatsAppFlow({"doctype": "WhatsApp Flow"})
+        component = flow.build_field_component(
+            frappe._dict({
+                "field_type": "TextBody",
+                "label": "Short preview",
+                "text": long_text,
+            }),
+            None,
+        )
+
+        self.assertEqual(component["text"], long_text)
+
     def test_single_screen_flow_json_generation(self):
         """Test flow JSON generation for a single screen flow."""
         screens = [{

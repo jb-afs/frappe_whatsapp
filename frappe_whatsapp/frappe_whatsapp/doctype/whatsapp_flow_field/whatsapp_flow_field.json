@@ -10,6 +10,7 @@
   "field_name",
   "field_type",
   "label",
+  "text",
   "column_break_1",
   "required",
   "enabled",
@@ -52,6 +53,12 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Label"
+  },
+  {
+   "depends_on": "eval:['TextHeading', 'TextSubheading', 'TextBody', 'TextCaption'].includes(doc.field_type)",
+   "fieldname": "text",
+   "fieldtype": "Long Text",
+   "label": "Text"
   },
   {
    "fieldname": "column_break_1",
