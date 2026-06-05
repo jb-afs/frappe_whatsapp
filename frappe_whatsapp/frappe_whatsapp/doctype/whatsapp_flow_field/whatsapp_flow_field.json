@@ -16,6 +16,7 @@
   "enabled",
   "section_break_options",
   "init_value",
+  "input_type",
   "min_chars",
   "max_chars",
   "column_break_2",
@@ -87,6 +88,13 @@
    "fieldname": "init_value",
    "fieldtype": "Data",
    "label": "Initial Value"
+  },
+  {
+   "depends_on": "eval:doc.field_type=='TextInput'",
+   "description": "WhatsApp input-type hint (e.g. 'phone', 'email', 'number')",
+   "fieldname": "input_type",
+   "fieldtype": "Data",
+   "label": "Input Type"
   },
   {
    "depends_on": "eval:['TextInput', 'TextArea'].includes(doc.field_type)",

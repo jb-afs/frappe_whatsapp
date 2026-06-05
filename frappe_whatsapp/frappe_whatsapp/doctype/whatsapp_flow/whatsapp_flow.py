@@ -236,6 +236,8 @@ class WhatsAppFlow(Document):
 
         # Text input specific
         if field_type in ["TextInput", "TextArea"]:
+            if field_type == "TextInput" and getattr(field, "input_type", None):
+                component["input-type"] = field.input_type
             if field.min_chars:
                 component["min-chars"] = field.min_chars
             if field.max_chars:
@@ -979,6 +981,7 @@ def parse_flow_json_to_screens(flow_doc, flow_json):
                 "enabled": 1,
                 "helper_text": child.get("helper-text", ""),
                 "init_value": child.get("init-value", ""),
+                "input_type": child.get("input-type", ""),
                 "min_chars": child.get("min-chars"),
                 "max_chars": child.get("max-chars"),
                 "error_message": child.get("error-message", "")
