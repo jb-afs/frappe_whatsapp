@@ -3,6 +3,7 @@ import frappe
 import json
 import requests
 import time
+from frappe import _
 from werkzeug.wrappers import Response
 import frappe.utils
 
@@ -61,7 +62,14 @@ def post():
 	)
 
 	whatsapp_account = get_whatsapp_account(phone_id) if phone_id else None
-	if not whatsapp_account:
+
+	# Only `messages` events carry `metadata.phone_number_id`. Status-change
+	# events (`message_template_status_update`, message status callbacks) have
+	# no metadata, so `phone_id` is None and `whatsapp_account` is also None
+	# for them by design. Gating the entire handler on `whatsapp_account`
+	# silently drops every template-status update; gate only the message-
+	# ingestion branch instead.
+	if messages and not whatsapp_account:
 		return
 
 	if messages:
@@ -159,7 +167,7 @@ def post():
 					}).insert(ignore_permissions=True)
 
 					# Publish realtime event for flow response
-					frappe.publish_realtime(
+					frappe.publish_realtime(  # nosemgrep: frappe-realtime-pick-room -- intentional site-wide fan-out for chat UIs (whatsapp_chat companion app) listening for inbound flow responses
 						"whatsapp_flow_response",
 						{
 							"phone": message['from'],
@@ -168,6 +176,22 @@ def post():
 							"whatsapp_account": whatsapp_account.name
 						}
 					)
+			# NEW: Handle Shopping Cart / Orders from MPM
+			elif message_type == 'order':
+				order_data = message['order']
+
+				# Inject the raw data into product_catalog_json
+				frappe.get_doc({
+					"doctype": "WhatsApp Message",
+					"type": "Incoming",
+					"from": message['from'],
+					"message": _("New Order Received via WhatsApp"),
+					"message_id": message['id'],
+					"content_type": "order",
+					"profile_name": sender_profile_name,
+					"whatsapp_account": whatsapp_account.name,
+					"product_catalog_json": json.dumps(order_data)
+				}).insert(ignore_permissions=True)
 			elif message_type in ["image", "audio", "video", "document"]:
 				token = whatsapp_account.get_password("token")
 				url = f"{whatsapp_account.url}/{whatsapp_account.version}/"

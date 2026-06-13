@@ -2,10 +2,10 @@
 
 # Copyright (c) 2022, Shridhar Patil and contributors
 # For license information, please see license.txt
-import os
 import json
 import frappe
 import magic
+import requests
 from frappe.model.document import Document
 from frappe.integrations.utils import make_post_request, make_request
 from frappe.desk.form.utils import get_pdf_link
@@ -13,7 +13,7 @@ from frappe.desk.form.utils import get_pdf_link
 from frappe_whatsapp.utils import get_whatsapp_account
 
 
-class WhatsAppTemplates(Document):
+class WhatsAppTemplates(Document):  # nosemgrep: frappe-modifying-but-not-committing-other-method -- get_settings() sets self._token/_url/_version/_business_id/_app_id/_headers as in-memory scratch for the outbound Meta HTTP call; they are not DocType fields and must not be persisted
     """Create whatsapp template."""
 
     def validate(self):
@@ -23,8 +23,8 @@ class WhatsAppTemplates(Document):
             self.language_code = lang_code.replace("-", "_")
 
         if self.header_type in ["IMAGE", "DOCUMENT"] and self.sample:
-            self.get_session_id()
-            self.get_media_id()
+            self.get_session_id(self.sample)
+            self.get_media_id(self.sample)
 
         # meta_fields = ["template", "header", "footer", "buttons", "header_type"]
         meta_fields = ["template", "header", "footer", "header_type"]
@@ -45,15 +45,23 @@ class WhatsAppTemplates(Document):
             else:
                 self.whatsapp_account = default_whatsapp_account.name
 
-    def get_session_id(self):
+    def get_session_id(self, file):
         """Upload media."""
         self.get_settings()
-        file_path = self.get_absolute_path(self.sample)
-        mime = magic.Magic(mime=True)
-        file_type = mime.from_file(file_path)
+
+        # Check if it's a remote file, load data accordingly.
+        if file.startswith(("http://", "https://")):
+            remote_file_data = self._prepare_remote_file(file)
+            file_type = remote_file_data["file_type"]
+            file_length = remote_file_data["file_size"]
+        else:
+            file_content = self._read_local_file(file)
+            mime = magic.Magic(mime=True)
+            file_type = mime.from_buffer(file_content)
+            file_length = len(file_content)
 
         payload = {
-            "file_length": os.path.getsize(file_path),
+            "file_length": file_length,
             "file_type": file_type,
             "messaging_product": "whatsapp",
         }
@@ -65,13 +73,43 @@ class WhatsAppTemplates(Document):
         )
         self._session_id = response["id"]
 
-    def get_media_id(self):
+    def _prepare_remote_file(self, file_url):
+        """Download and return remote file content from URL."""
+        try:
+            response = requests.get(file_url, timeout=30)
+            response.raise_for_status()
+
+            file_content = response.content
+            file_size = len(file_content)
+
+            # Get MIME type from Content-Type header or detect from content
+            content_type = response.headers.get("Content-Type", "").split(";")[0].strip()
+            if content_type:
+                file_type = content_type
+            else:
+                # Fallback to magic detection from content
+                mime = magic.Magic(mime=True)
+                file_type = mime.from_buffer(file_content)
+
+            return {
+                "file_content": file_content,
+                "file_size": file_size,
+                "file_type": file_type,
+            }
+        except Exception as e:
+            frappe.throw(f"Failed to download file from URL: {str(e)}")
+
+    def get_media_id(self, file):
         self.get_settings()
 
         headers = {"authorization": f"OAuth {self._token}"}
-        file_name = self.get_absolute_path(self.sample)
-        with open(file_name, mode="rb") as file:  # b is important -> binary
-            file_content = file.read()
+
+        # Check if it's a remote file, load data accordingly.
+        if file.startswith(("http://", "https://")):
+            remote_file_data = self._prepare_remote_file(file)
+            file_content = remote_file_data["file_content"]
+        else:
+            file_content = self._read_local_file(file)
 
         payload = file_content
         response = make_post_request(
@@ -82,16 +120,16 @@ class WhatsAppTemplates(Document):
 
         self._media_id = response["h"]
 
-    def get_absolute_path(self, file_name):
-        if file_name.startswith("/files/"):
-            file_path = f"{frappe.utils.get_bench_path()}/sites/{frappe.utils.get_site_base_path()[2:]}/public{file_name}"
-        if file_name.startswith("/private/"):
-            file_path = f"{frappe.utils.get_bench_path()}/sites/{frappe.utils.get_site_base_path()[2:]}{file_name}"
-        return file_path
+    def _read_local_file(self, file_url):
+        # Routed through File so path resolution stays inside Frappe's vetted
+        # file handling; never feed a raw URL to open().
+        return frappe.get_doc("File", {"file_url": file_url}).get_content()
 
-    def after_insert(self):
+    def after_insert(self):  # nosemgrep: frappe-modifying-but-not-committing -- self.actual_name/id/status are persisted via self.db_update() after the Meta round-trip; the static check can't trace through the API call
+        # actual_name / id / status are persisted via self.db_update() below
+        # after the Meta round-trip; the static check can't trace that call.
         if self.template_name:
-            self.actual_name = self.template_name.lower().replace(" ", "_")
+            self.actual_name = self.template_name.lower().replace(" ", "_")  # nosemgrep: frappe-modifying-but-not-committing
 
         self.get_settings()
         data = {
@@ -132,6 +170,10 @@ class WhatsAppTemplates(Document):
                     b["phone_number"] = btn.phone_number
                 elif btn.button_type == "Quick Reply":
                     b["type"] = "QUICK_REPLY"
+                elif btn.button_type == "Multi-Product Message":
+                    b["type"] = "MPM"
+                elif btn.button_type == "Catalog":
+                    b["type"] = "CATALOG"
 
                 button_block["buttons"].append(b)
 
@@ -143,8 +185,8 @@ class WhatsAppTemplates(Document):
                 headers=self._headers,
                 data=json.dumps(data),
             )
-            self.id = response["id"]
-            self.status = response["status"]
+            self.id = response["id"]  # nosemgrep: frappe-modifying-but-not-committing
+            self.status = response["status"]  # nosemgrep: frappe-modifying-but-not-committing
             self.db_update()
         except Exception as e:
             res = frappe.flags.integration_request.json().get("error", {})
@@ -185,6 +227,11 @@ class WhatsAppTemplates(Document):
                     b["phone_number"] = btn.phone_number
                 elif btn.button_type == "Quick Reply":
                     b["type"] = "QUICK_REPLY"
+                elif btn.button_type == "Multi-Product Message":
+                    b["type"] = "MPM"
+                    # MPM buttons often require additional fields like catalog_id
+                elif btn.button_type == "Catalog":
+                    b["type"] = "CATALOG"
 
                 button_block["buttons"].append(b)
 
@@ -207,14 +254,17 @@ class WhatsAppTemplates(Document):
 
     def get_settings(self):
         """Get whatsapp settings."""
+        # Underscore-prefixed attributes below are in-memory scratch for the
+        # outbound HTTP call; they are not DocType fields and must not be
+        # persisted. Semgrep's static check can't tell the difference.
         settings = frappe.get_doc("WhatsApp Account", self.whatsapp_account)
-        self._token = settings.get_password("token")
-        self._url = settings.url
-        self._version = settings.version
-        self._business_id = settings.business_id
-        self._app_id = settings.app_id
+        self._token = settings.get_password("token")  # nosemgrep: frappe-modifying-but-not-committing-other-method
+        self._url = settings.url  # nosemgrep: frappe-modifying-but-not-committing-other-method
+        self._version = settings.version  # nosemgrep: frappe-modifying-but-not-committing-other-method
+        self._business_id = settings.business_id  # nosemgrep: frappe-modifying-but-not-committing-other-method
+        self._app_id = settings.app_id  # nosemgrep: frappe-modifying-but-not-committing-other-method
 
-        self._headers = {
+        self._headers = {  # nosemgrep: frappe-modifying-but-not-committing-other-method
             "authorization": f"Bearer {self._token}",
             "content-type": "application/json",
         }
@@ -341,13 +391,18 @@ def fetch():
                             "PHONE_NUMBER": "Call Phone",
                             "QUICK_REPLY": "Quick Reply",
                             "FLOW": "Flow",
+                            "MPM": "Multi-Product Message",
+                            "CATALOG": "Catalog",
                         }
 
-                        for i, button in enumerate(
-                            component.get("buttons", []), start=1
-                        ):
+                        for i, button in enumerate(component.get("buttons", []), start=1):
+                            btn_type_raw = button.get("type")
+                            if btn_type_raw not in typeMap:
+                                frappe.log_error("WhatsApp Fetch Error", f"Unknown WhatsApp Button Type: {btn_type_raw}")
+                                continue
+
                             btn = {}
-                            btn["button_type"] = typeMap[button["type"]]
+                            btn["button_type"] = typeMap[btn_type_raw]
                             btn["button_label"] = button.get("text")
                             btn["sequence"] = i
 
@@ -403,4 +458,3 @@ def upsert_doc_without_hooks(doc, child_dt, child_field):
         d.parenttype = doc.doctype
         d.parentfield = child_field
         d.db_insert()
-    frappe.db.commit()

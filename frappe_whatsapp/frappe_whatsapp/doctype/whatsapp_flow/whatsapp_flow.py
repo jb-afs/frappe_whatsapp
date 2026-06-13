@@ -563,7 +563,6 @@ class WhatsAppFlow(Document):
             "whatsapp_account": self.whatsapp_account
         })
         msg.insert(ignore_permissions=True)
-        frappe.db.commit()
 
         frappe.msgprint(
             _("Test flow sent to {0}").format(phone_number),
@@ -804,7 +803,6 @@ def import_flow_from_whatsapp(whatsapp_account, flow_id, flow_name=None):
         flow_doc.flags.ignore_validate = True
         flow_doc.insert(ignore_permissions=True)
 
-        frappe.db.commit()
         frappe.msgprint(_("Flow imported successfully: {0}").format(flow_doc.name), indicator="green")
 
         return flow_doc.name
@@ -936,7 +934,6 @@ def sync_all_flows(whatsapp_account):
                     frappe.log_error("WhatsApp Flow Sync", frappe.get_traceback())
                     result["skipped"] += 1
 
-        frappe.db.commit()
         return result
 
     except Exception as e:
